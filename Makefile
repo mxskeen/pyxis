@@ -1,4 +1,4 @@
-.PHONY: sync,run
+.PHONY: sync run
 
 sync:
 	uv sync
