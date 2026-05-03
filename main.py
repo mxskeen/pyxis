@@ -1,0 +1,276 @@
+import asyncio
+import logging
+import smtplib
+import re
+import json
+import dns.resolver
+from fastapi import FastAPI, Query
+from fastapi.responses import HTMLResponse, StreamingResponse
+from pathlib import Path
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(title="Pyxis")
+
+PATTERNS = [
+    "{first}.{last}@{domain}",
+    "{first}{last}@{domain}",
+    "{f}.{last}@{domain}",
+    "{first}.{l}@{domain}",
+    "{f}{last}@{domain}",
+    "{first}{l}@{domain}",
+    "{first}@{domain}",
+    "{last}@{domain}",
+    "{f}.{l}@{domain}",
+    "{f}{l}@{domain}",
+    "{last}.{first}@{domain}",
+    "{first}_{last}@{domain}",
+    "{last}{first}@{domain}",
+    "{first}.{middle}.{last}@{domain}",
+    "{first}{middle}{last}@{domain}",
+    "{f}{middle}{last}@{domain}",
+]
+
+
+def generate_patterns(first: str, last: str, domain: str, middle: str = "") -> list[str]:
+    domain = domain.lower().strip()
+    first = first.lower().strip()
+    last = last.lower().strip()
+    middle = middle.lower().strip()
+
+    if not last:
+        return [f"{first}@{domain}"]
+
+    emails = set()
+    for tmpl in PATTERNS:
+        email = tmpl.format(
+            first=first,
+            last=last,
+            f=first[0] if first else "",
+            l=last[0] if last else "",
+            middle=middle if middle else "",
+            domain=domain,
+        )
+        # Clean up empty placeholder artifacts
+        email = re.sub(r'\.@', '@', email)
+        email = re.sub(r'\.\.', '.', email)
+        email = email.lstrip('.')
+        if re.match(r'^[^@]+@[^@]+\.[^@]+$', email):
+            emails.add(email)
+    return sorted(emails)
+
+
+async def get_mx_host(domain: str) -> str | None:
+    """Get MX host for a domain."""
+    try:
+        mx_records = await asyncio.to_thread(dns.resolver.resolve, domain, 'MX')
+        return str(sorted(mx_records, key=lambda r: r.preference)[0].exchange)
+    except:
+        return None
+
+
+async def verify_smtp_port(mx_host: str, email: str, port: int, use_tls: bool = False, timeout: int = 15) -> dict:
+    """Verify email via SMTP on specific port."""
+    try:
+        def _smtp_check():
+            server = smtplib.SMTP(timeout=timeout)
+            server.connect(mx_host, port)
+            if use_tls:
+                server.starttls()
+            server.ehlo()
+            server.mail('')
+            code, msg = server.rcpt(email)
+            server.quit()
+            return code, msg
+
+        loop = asyncio.get_event_loop()
+        code, msg = await loop.run_in_executor(None, _smtp_check)
+
+        if code == 250:
+            return {"email": email, "valid": True, "reason": f"Mailbox exists (port {port})", "status": "valid"}
+        else:
+            reason = str(msg).strip()[:80] if msg else f"SMTP code {code}"
+            return {"email": email, "valid": False, "reason": reason, "status": "invalid"}
+    except Exception as e:
+        return {"email": email, "valid": False, "reason": f"Port {port} failed: {str(e)[:50]}", "status": "error"}
+
+
+async def verify_smtp(email: str, timeout: int = 15) -> dict:
+    """Verify email via SMTP - try multiple methods."""
+    domain = email.split('@')[1]
+
+    # 1. MX record lookup
+    mx_host = await get_mx_host(domain)
+    if not mx_host:
+        return {"email": email, "valid": False, "reason": "Domain has no mail server", "status": "invalid"}
+
+    # 2. Check if domain is catch-all (accepts all emails)
+    catchall = await check_catchall(domain, timeout)
+    if catchall["catchall"]:
+        return {"email": email, "valid": None, "reason": "Domain is catch-all (accepts all)", "status": "catchall"}
+
+    # 3. Try multiple SMTP methods
+    methods = [
+        (25, False),   # Port 25, plain
+        (587, True),   # Port 587, TLS
+    ]
+
+    for port, use_tls in methods:
+        result = await verify_smtp_port(mx_host, email, port, use_tls, timeout)
+        if result["status"] == "valid":
+            return result
+
+        # Check for specific rejection reasons (works for both invalid and error)
+        reason_lower = result["reason"].lower()
+        # Zoho-specific message
+        if "zoho" in reason_lower:
+            return {"email": email, "valid": None, "reason": "Zoho blocks verification from dynamic IPs", "status": "unknown"}
+        # Dynamic IP or policy rejection - generic message
+        if "dynamic" in reason_lower or "policy" in reason_lower:
+            return {"email": email, "valid": None, "reason": "Domain blocks verification from this IP", "status": "unknown"}
+
+        # Clear "user unknown" means invalid - but not policy rejections
+        if result["status"] == "invalid" and "rejected" not in reason_lower:
+            return result
+
+    # All methods failed - return last result
+    return result
+
+
+async def check_catchall(domain: str, timeout: int = 15) -> dict:
+    """Check if domain is catch-all (accepts all emails)."""
+    import random
+    import string
+    import smtplib
+
+    # Generate random test emails
+    def random_str(length=8):
+        return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
+
+    mx_host = await get_mx_host(domain)
+    if not mx_host:
+        return {"domain": domain, "catchall": False, "reason": "No MX records"}
+
+    # Test with random emails directly (no recursion!)
+    test_emails = [
+        f"test{random_str()}@{domain}",
+        f"verify{random_str()}@{domain}",
+    ]
+
+    results = []
+    for email in test_emails:
+        try:
+            def _check():
+                server = smtplib.SMTP(timeout=timeout)
+                server.connect(mx_host, 25)
+                server.ehlo()
+                server.mail('')
+                code, msg = server.rcpt(email)
+                server.quit()
+                return code == 250
+            is_accepted = await asyncio.get_event_loop().run_in_executor(None, _check)
+            results.append({"email": email, "accepted": is_accepted})
+        except:
+            results.append({"email": email, "accepted": False})
+
+    # Catch-all if all accepted
+    accepted = sum(1 for r in results if r["accepted"])
+    is_catchall = accepted >= len(test_emails)
+
+    return {
+        "domain": domain,
+        "catchall": is_catchall,
+        "tested": test_emails,
+        "accepted_count": accepted,
+        "total_tested": len(test_emails)
+    }
+
+
+@app.get("/api/generate")
+async def generate_emails(
+    first: str = Query(...),
+    last: str = Query(default=""),
+    domain: str = Query(...),
+    middle: str = Query(default=""),
+):
+    """Generate possible email patterns for a person."""
+    emails = generate_patterns(first, last, domain, middle)
+    return {"emails": emails, "count": len(emails)}
+
+
+@app.get("/api/verify")
+async def verify_email(email: str = Query(...)):
+    """Verify a single email address."""
+    result = await verify_smtp(email)
+    return result
+
+
+@app.get("/api/verify-all")
+async def verify_all(
+    first: str = Query(...),
+    last: str = Query(default=""),
+    domain: str = Query(...),
+    middle: str = Query(default=""),
+    stream: bool = Query(default=False),
+):
+    """Generate and verify all email patterns. Set stream=true for sequential verification."""
+    emails = generate_patterns(first, last, domain, middle)
+
+    if stream:
+        # Sequential verification - one at a time
+        results = []
+        for email in emails:
+            result = await verify_smtp(email)
+            results.append(result)
+        return {"results": results}
+    else:
+        # Parallel verification (default)
+        tasks = [verify_smtp(email) for email in emails]
+        results = await asyncio.gather(*tasks)
+        return {"results": results}
+
+
+
+@app.get("/api/verify-stream")
+async def verify_stream(
+    first: str = Query(...),
+    last: str = Query(default=""),
+    domain: str = Query(...),
+    middle: str = Query(default=""),
+):
+    """Stream verification results as they complete (SSE) - sequential verification."""
+    emails = generate_patterns(first, last, domain, middle)
+
+    async def event_generator():
+        try:
+            for email in emails:
+                try:
+                    result = await verify_smtp(email)
+                    yield f"data: {json.dumps(result)}\n\n"
+                except Exception as e:
+                    logger.error(f"Error verifying {email}: {e}")
+                    yield f"data: {json.dumps({'email': email, 'status': 'error', 'valid': False, 'reason': str(e)[:100]})}\n\n"
+            # Send completion signal
+            yield f"data: {json.dumps({'status': 'done'})}\n\n"
+        except Exception as e:
+            logger.error(f"Stream error: {e}")
+            yield f"data: {json.dumps({'status': 'error', 'error': str(e)[:100]})}\n\n"
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+        "Connection": "keep-alive",
+    }
+    return StreamingResponse(event_generator(), media_type="text/event-stream", headers=headers)
+
+@app.get("/api/check-catchall")
+async def api_check_catchall(domain: str = Query(...)):
+    """Check if domain is catch-all (accepts all emails)."""
+    return await check_catchall(domain)
+
+
+@app.get("/", response_class=HTMLResponse)
+async def index():
+    html = Path("static/index.html").read_text()
+    return HTMLResponse(html)
