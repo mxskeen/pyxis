@@ -1,12 +1,13 @@
 # Pyxis
 
-Generate and verify email addresses for job applications.
+Generate and verify email addresses for job applications // reach out.
+free and self hosted
 
 ![Pyxis Screenshot](./image.png)
 
 ## Features
 
-- Generate 13+ common email patterns from name + domain
+- Generate 13+ common email patterns from name + domain (add more patterns in main.py)
 - Verify inboxes via SMTP handshake
 - Works with Gmail, Outlook, and most business email providers
 - Zoho detection (blocks verification from dynamic IPs)

@@ -1,0 +1,7 @@
+[project]
+name = "ema"
+version = "0.1.0"
+description = "Pyxis - Email pattern generator and SMTP verifier"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["fastapi", "uvicorn[standard]", "dnspython"]

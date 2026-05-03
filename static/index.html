@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pyxis</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fa; color: #1a1a2e; min-height: 100vh; }
+.social-links { position: fixed; right: 20px; top: 20px; display: flex; flex-direction: column; gap: 12px; z-index: 1000; }
+.social-link { width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; border-radius: 8px; background: white; border: 1px solid #d1d5db; color: #666; text-decoration: none; transition: all 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.social-link:hover { background: #2563eb; color: white; border-color: #2563eb; transform: scale(1.1); }
+.container { max-width: 800px; margin: 0 auto; padding: 40px 20px; }
+h1 { font-size: 28px; margin-bottom: 8px; }
+.subtitle { color: #666; margin-bottom: 32px; font-size: 14px; }
+.follow-text { color: #999; margin-bottom: 32px; font-size: 13px; font-style: italic; }
+.card { background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 20px; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+.form-row.full { grid-template-columns: 1fr; }
+input { width: 100%; padding: 10px 14px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; outline: none; transition: border-color 0.2s; }
+input:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
+button { width: 100%; padding: 12px; background: #2563eb; color: white; border: none; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+button:hover { background: #1d4ed8; }
+button:disabled { background: #93b4f5; cursor: not-allowed; }
+.result-section { margin-top: 24px; }
+.result-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.result-header h2 { font-size: 18px; }
+.badge { font-size: 12px; padding: 4px 10px; border-radius: 999px; font-weight: 600; }
+.badge.idle { background: #e5e7eb; color: #666; }
+.badge.loading { background: #dbeafe; color: #1d4ed8; }
+.badge.done { background: #d1fae5; color: #065f46; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th { text-align: left; padding: 10px 12px; border-bottom: 2px solid #e5e7eb; color: #666; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+td { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; }
+tr:hover td { background: #f9fafb; }
+.status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.status-dot.valid { background: #10b981; }
+.status-dot.invalid { background: #ef4444; }
+.status-dot.error { background: #f59e0b; }
+.status-dot.unknown { background: #8b5cf6; }
+.status-dot.catchall { background: #f97316; }
+.status-dot.checking { background: #93c5fd; animation: pulse 1s infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+.reason { color: #888; font-size: 12px; }
+.copy-btn { background: none; border: 1px solid #d1d5db; border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer; color: #666; width: auto; }
+.copy-btn:hover { background: #f3f4f6; color: #1a1a2e; }
+.copy-btn.copied { background: #d1fae5; border-color: #10b981; color: #065f46; }
+.controls { display: flex; gap: 8px; margin-top: 12px; }
+.controls .btn-secondary { background: white; border: 1px solid #d1d5db; color: #374151; padding: 8px 16px; border-radius: 8px; font-size: 13px; cursor: pointer; font-weight: 600; width: auto; }
+.controls .btn-secondary:hover { background: #f3f4f6; }
+.summary { display: flex; gap: 16px; margin-top: 16px; padding: 12px 16px; background: #f9fafb; border-radius: 8px; font-size: 13px; }
+.summary span { display: flex; align-items: center; gap: 4px; }
+.summary .count-valid { color: #10b981; font-weight: 600; }
+.summary .count-invalid { color: #ef4444; font-weight: 600; }
+.summary .count-unknown { color: #8b5cf6; font-weight: 600; }
+.summary .count-catchall { color: #f97316; font-weight: 600; }
+.summary .count-error { color: #f59e0b; font-weight: 600; }
+.summary .count-catchall { color: #f97316; font-weight: 600; }
+.checkbox-label { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; font-size: 14px; color: #666; }
+.checkbox-label input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; accent-color: #2563eb; }
+@media (max-width: 600px) {
+  .form-row { grid-template-columns: 1fr; }
+  .social-links { right: 10px; top: 10px; gap: 8px; }
+  .social-link { width: 36px; height: 36px; }
+}
+</style>
+</head>
+<body>
+<div class="social-links">
+  <a href="https://github.com/mxskeen" target="_blank" rel="noopener noreferrer" title="GitHub" class="social-link">
+    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16">
+      <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8"/>
+    </svg>
+  </a>
+  <a href="https://linkedin.com/in/mxskeen" target="_blank" rel="noopener noreferrer" title="LinkedIn" class="social-link">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6 z"></path><rect x="2" y="9" width="4" height="12"></rect><circle cx="4" cy="4" r="2"></circle></svg>
+  </a>
+</div>
+
+<div class="container">
+  <h1>Pyxis</h1>
+  <p class="subtitle">Generate email patterns and verify which inboxes exist. (Works ~70-80% of the time)</p>
+  <p class="follow-text">Follow me on GitHub & LinkedIn for more stuff</p>
+  <div class="card">
+    <div class="form-row">
+      <input type="text" id="first" placeholder="First name" autocomplete="off">
+      <input type="text" id="last" placeholder="Last name (optional)" autocomplete="off">
+      <input type="text" id="domain" placeholder="Domain (e.g. company.com)" autocomplete="off">
+    </div>
+    <div class="form-row full">
+      <input type="text" id="middle" placeholder="Middle name (optional)" autocomplete="off">
+    </div>
+    <label class="checkbox-label">
+      <input type="checkbox" id="streamMode"> Slow mode (verify one at a time, more reliable)
+    </label>
+    <button id="findBtn" onclick="startSearch()">Generate &amp; Verify</button>
+    <div class="controls">
+      <button class="btn-secondary" onclick="generateOnly()">Generate Only</button>
+      <button class="btn-secondary" onclick="copyAll()">Copy All</button>
+      <button class="btn-secondary" onclick="copyValid()">Copy Valid</button>
+    </div>
+  </div>
+
+  <div id="results" class="result-section" style="display:none">
+    <div class="result-header">
+      <h2>Results</h2>
+      <span id="statusBadge" class="badge idle">Idle</span>
+    </div>
+    <div id="summary" class="summary"></div>
+    <table>
+      <thead>
+        <tr>
+          <th>Email</th>
+          <th>Status</th>
+          <th>Reason</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="resultsBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const results = new Map();
+let currentEventSource = null;  // Track active EventSource
+
+function getInputs() {
+  return {
+    first: document.getElementById('first').value.trim(),
+    last: document.getElementById('last').value.trim(),
+    domain: document.getElementById('domain').value.trim(),
+    middle: document.getElementById('middle').value.trim(),
+  };
+}
+
+async function generateOnly() {
+  const { first, last, domain, middle } = getInputs();
+  if (!first || !domain) { alert('Please fill in first name and domain.'); return; }
+
+  try {
+    const res = await fetch(`/api/generate?first=${encodeURIComponent(first)}&last=${encodeURIComponent(last)}&domain=${encodeURIComponent(domain)}&middle=${encodeURIComponent(middle)}`);
+    const data = await res.json();
+    showResults(data.emails.map(e => ({ email: e, status: 'generated', valid: null, reason: '' })));
+    document.getElementById('statusBadge').textContent = `${data.count} generated`;
+    document.getElementById('statusBadge').className = 'badge done';
+    document.getElementById('summary').innerHTML = '';
+  } catch (e) {
+    alert('Error generating emails: ' + e.message);
+  }
+}
+
+async function startSearch() {
+  const { first, last, domain, middle } = getInputs();
+  if (!first || !domain) { alert('Please fill in first name and domain.'); return; }
+
+  const streamMode = document.getElementById('streamMode').checked;
+  const btn = document.getElementById('findBtn');
+  
+  // Close any existing EventSource
+  if (currentEventSource) {
+    currentEventSource.close();
+    currentEventSource = null;
+  }
+  
+  btn.disabled = true;
+  btn.textContent = 'Verifying...';
+
+  document.getElementById('results').style.display = 'block';
+  document.getElementById('statusBadge').textContent = 'Verifying...';
+  document.getElementById('statusBadge').className = 'badge loading';
+
+  results.clear();
+  const tbody = document.getElementById('resultsBody');
+  tbody.innerHTML = '';
+  document.getElementById('summary').innerHTML = '';
+
+  try {
+    if (streamMode) {
+      // Streaming mode - show results as they come in
+      const url = `/api/verify-stream?first=${encodeURIComponent(first)}&last=${encodeURIComponent(last)}&domain=${encodeURIComponent(domain)}&middle=${encodeURIComponent(middle)}`;
+      currentEventSource = new EventSource(url);
+
+      currentEventSource.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        if (data.status === 'done') {
+          currentEventSource.close();
+          currentEventSource = null;
+          updateSummary(Array.from(results.values()));
+          document.getElementById('statusBadge').textContent = 'Done';
+          document.getElementById('statusBadge').className = 'badge done';
+          btn.disabled = false;
+          btn.textContent = 'Generate & Verify';
+        } else if (data.email) {
+          results.set(data.email, data);
+          // Remove existing row if any, then add new
+          const existing = tbody.querySelector(`tr[data-email="${data.email}"]`);
+          if (existing) existing.remove();
+          addResultRow(data);
+          updateSummary(Array.from(results.values()));
+        }
+      };
+
+      currentEventSource.onerror = () => {
+        if (currentEventSource) {
+          currentEventSource.close();
+          currentEventSource = null;
+        }
+        btn.disabled = false;
+        btn.textContent = 'Generate & Verify';
+        document.getElementById('statusBadge').textContent = 'Connection closed';
+        document.getElementById('statusBadge').className = 'badge idle';
+      };
+    } else {
+      // Batch mode
+      const res = await fetch(`/api/verify-all?first=${encodeURIComponent(first)}&last=${encodeURIComponent(last)}&domain=${encodeURIComponent(domain)}&middle=${encodeURIComponent(middle)}`);
+      const data = await res.json();
+
+      data.results.forEach(r => {
+        results.set(r.email, r);
+        addResultRow(r);
+      });
+
+      updateSummary(data.results);
+      document.getElementById('statusBadge').textContent = 'Done';
+      document.getElementById('statusBadge').className = 'badge done';
+      btn.disabled = false;
+      btn.textContent = 'Generate & Verify';
+    }
+  } catch (e) {
+    if (currentEventSource) {
+      currentEventSource.close();
+      currentEventSource = null;
+    }
+    alert('Error: ' + e.message);
+    document.getElementById('statusBadge').textContent = 'Error';
+    document.getElementById('statusBadge').className = 'badge idle';
+    btn.disabled = false;
+    btn.textContent = 'Generate & Verify';
+  }
+}
+
+function showResults(emails) {
+  document.getElementById('results').style.display = 'block';
+  const tbody = document.getElementById('resultsBody');
+  tbody.innerHTML = '';
+  results.clear();
+  emails.forEach(e => {
+    results.set(e.email, e);
+    addResultRow(e);
+  });
+}
+
+function addResultRow(r) {
+  const tbody = document.getElementById('resultsBody');
+  const tr = document.createElement('tr');
+  tr.setAttribute('data-email', r.email);
+  const statusText = r.status === 'valid' ? 'Valid' : r.status === 'invalid' ? 'Invalid' : r.status === 'generated' ? 'Generated' : r.status === 'unknown' ? 'Unknown' : r.status === 'catchall' ? 'Catch-all' : 'Error';
+
+  let statusClass = r.status === 'valid' ? 'valid' : r.status === 'invalid' ? 'invalid' : r.status === 'unknown' ? 'unknown' : r.status === 'catchall' ? 'catchall' : 'error';
+  if (r.status === 'generated') statusClass = 'checking';
+
+  tr.innerHTML = `
+    <td><code>${escHtml(r.email)}</code></td>
+    <td><span class="status-dot ${statusClass}"></span>${statusText}</td>
+    <td class="reason">${escHtml(r.reason || '-')}</td>
+    <td><button class="copy-btn" data-email="${escHtml(r.email)}" onclick="copyEmail(this.getAttribute('data-email'), this)">Copy</button></td>
+  `;
+  tbody.appendChild(tr);
+}
+
+function updateSummary(results) {
+  const valid = results.filter(r => r.status === 'valid').length;
+  const invalid = results.filter(r => r.status === 'invalid').length;
+  const error = results.filter(r => r.status === 'error').length;
+  const unknown = results.filter(r => r.status === 'unknown').length;
+  const catchall = results.filter(r => r.status === 'catchall').length;
+  document.getElementById('summary').innerHTML = `
+    <span>Total: <strong>${results.length}</strong></span>
+    <span class="count-valid">&#x2714; Valid: ${valid}</span>
+    <span class="count-invalid">&#x2718; Invalid: ${invalid}</span>
+    <span class="count-catchall">&#x26A0; Catch-all: ${catchall}</span>
+    <span class="count-unknown">&#x2753; Unknown: ${unknown}</span>
+    <span class="count-error">&#x26A0; Error: ${error}</span>
+  `;
+}
+
+function copyEmail(email, btn) {
+  navigator.clipboard.writeText(email).then(() => {
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+  });
+}
+
+function copyAll() {
+  const emails = Array.from(results.keys());
+  if (!emails.length) return;
+  navigator.clipboard.writeText(emails.join('\n')).then(() => alert('All emails copied!'));
+}
+
+function copyValid() {
+  const valid = Array.from(results.values()).filter(r => r.status === 'valid').map(r => r.email);
+  if (!valid.length) { alert('No valid emails found.'); return; }
+  navigator.clipboard.writeText(valid.join('\n')).then(() => alert(`${valid.length} valid emails copied!`));
+}
+
+function escHtml(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/'/g,'&#39;').replace(/"/g,'&quot;');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('domain').addEventListener('keydown', e => {
+    if (e.key === 'Enter') startSearch();
+  });
+});
+</script>
+</body>
+</html>
