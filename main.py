@@ -1,13 +1,17 @@
 import asyncio
+import csv
+import io
 import logging
 import smtplib
 import re
 import json
 import dns.resolver
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pathlib import Path
 from pydantic import BaseModel
+from openpyxl import load_workbook
+import xlrd
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -24,6 +28,13 @@ class NameInput(BaseModel):
 class MultiNameRequest(BaseModel):
     domain: str
     names: list[NameInput]
+
+
+class ValidateEmailsRequest(BaseModel):
+    emails: list[str]
+
+
+EMAIL_RE = re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}')
 
 PATTERNS = [
     "{first}.{last}@{domain}",
@@ -65,6 +76,72 @@ def normalize_domain(domain: str) -> str:
     if not DOMAIN_RE.match(value):
         raise HTTPException(status_code=400, detail="Please enter a valid domain name with a TLD")
     return value
+
+
+def extract_emails_from_text(text: str) -> list[str]:
+    return EMAIL_RE.findall(text or "")
+
+
+def dedupe_emails(emails: list[str]) -> list[str]:
+    seen = set()
+    result = []
+    for email in emails:
+        normalized = email.strip()
+        if not normalized:
+            continue
+        key = normalized.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(normalized)
+    return result
+
+
+def extract_emails_from_csv_bytes(content: bytes) -> list[str]:
+    text = content.decode("utf-8-sig", errors="ignore")
+    reader = csv.reader(io.StringIO(text))
+    found = []
+    for row in reader:
+        for cell in row:
+            found.extend(extract_emails_from_text(str(cell)))
+    return found
+
+
+def extract_emails_from_xlsx_bytes(content: bytes) -> list[str]:
+    found = []
+    workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    for sheet in workbook.worksheets:
+        for row in sheet.iter_rows(values_only=True):
+            for cell in row:
+                if cell is None:
+                    continue
+                found.extend(extract_emails_from_text(str(cell)))
+    return found
+
+
+def extract_emails_from_xls_bytes(content: bytes) -> list[str]:
+    found = []
+    workbook = xlrd.open_workbook(file_contents=content)
+    for sheet in workbook.sheets():
+        for row_idx in range(sheet.nrows):
+            for cell in sheet.row_values(row_idx):
+                if cell is None:
+                    continue
+                found.extend(extract_emails_from_text(str(cell)))
+    return found
+
+
+def extract_emails_from_file(filename: str, content: bytes) -> list[str]:
+    lower_name = filename.lower()
+    if lower_name.endswith(".csv"):
+        return extract_emails_from_csv_bytes(content)
+    if lower_name.endswith(".xlsx"):
+        return extract_emails_from_xlsx_bytes(content)
+    if lower_name.endswith(".xls"):
+        return extract_emails_from_xls_bytes(content)
+    if lower_name.endswith(".txt"):
+        return extract_emails_from_text(content.decode("utf-8-sig", errors="ignore"))
+    return extract_emails_from_text(content.decode("utf-8-sig", errors="ignore"))
 
 
 def generate_patterns(first: str, last: str, domain: str, middle: str = "") -> list[str]:
@@ -456,6 +533,63 @@ async def verify_stream_multi(payload: MultiNameRequest = Body(...)):
 async def api_check_catchall(domain: str = Query(...)):
     """Check if domain is catch-all (accepts all emails)."""
     return await check_catchall(domain)
+
+
+@app.post("/api/validate-emails")
+async def validate_emails(payload: ValidateEmailsRequest = Body(...)):
+    """Validate a list of provided emails."""
+    if not payload.emails:
+        raise HTTPException(status_code=400, detail="At least one email is required")
+    
+    # Remove duplicates and validate email format
+    valid_emails = dedupe_emails([
+        email.strip()
+        for email in payload.emails
+        if email.strip() and EMAIL_RE.fullmatch(email.strip())
+    ])
+    
+    if not valid_emails:
+        raise HTTPException(status_code=400, detail="No valid emails provided")
+    
+    # Verify all emails in parallel
+    tasks = [verify_smtp(email) for email in valid_emails]
+    results = await asyncio.gather(*tasks)
+    
+    return {"total_count": len(results), "results": results}
+
+
+@app.post("/api/validate-emails-upload")
+async def validate_emails_upload(
+    file: UploadFile | None = File(default=None),
+    emails_text: str = Form(default=""),
+):
+    """Validate emails from pasted text, uploaded CSV/XLS/XLSX, or both."""
+    extracted_emails: list[str] = []
+
+    if emails_text.strip():
+        extracted_emails.extend(extract_emails_from_text(emails_text))
+
+    if file is not None:
+        content = await file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty")
+        try:
+            extracted_emails.extend(extract_emails_from_file(file.filename or "", content))
+        except Exception as exc:
+            logger.exception("Failed to parse uploaded file")
+            raise HTTPException(status_code=400, detail=f"Could not extract emails from file: {str(exc)[:120]}")
+
+    valid_emails = dedupe_emails([
+        email for email in extracted_emails if EMAIL_RE.fullmatch(email.strip())
+    ])
+
+    if not valid_emails:
+        raise HTTPException(status_code=400, detail="No valid emails provided")
+
+    tasks = [verify_smtp(email) for email in valid_emails]
+    results = await asyncio.gather(*tasks)
+
+    return {"total_count": len(results), "results": results, "source_count": len(extracted_emails)}
 
 
 @app.get("/", response_class=HTMLResponse)

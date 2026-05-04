@@ -89,12 +89,22 @@ tr:hover td { background: #f9fafb; }
 .checkbox-label input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; accent-color: #2563eb; }
 .field-hint { margin-top: 8px; font-size: 12px; color: #6b7280; }
 .field-hint.error { color: #dc2626; }
+.mode-tabs { display: flex; gap: 12px; margin-bottom: 24px; }
+.mode-tab { padding: 10px 20px; border: 1px solid #d1d5db; border-radius: 8px; background: white; color: #374151; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+.mode-tab:hover { background: #f3f4f6; }
+.mode-tab.active { background: #2563eb; color: white; border-color: #2563eb; }
+.btn-secondary { background: white; border: 1px solid #d1d5db; color: #374151; padding: 8px 16px; border-radius: 8px; font-size: 13px; cursor: pointer; font-weight: 600; width: auto; transition: background 0.2s, border-color 0.2s, color 0.2s; }
+.btn-secondary:hover { background: #f3f4f6; }
+.file-upload-wrapper { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+textarea { width: 100%; padding: 10px 14px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; outline: none; transition: border-color 0.2s; }
+textarea:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
 @media (max-width: 600px) {
   .form-row { grid-template-columns: 1fr; }
   .name-row { grid-template-columns: 1fr; }
   .tabs-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .social-links { right: 10px; top: 10px; gap: 8px; }
   .social-link { width: 36px; height: 36px; }
+  .mode-tabs { flex-wrap: wrap; }
 }
 </style>
 </head>
@@ -114,7 +124,15 @@ tr:hover td { background: #f9fafb; }
   <h1>Pyxis</h1>
   <p class="subtitle">Generate email patterns and verify which inboxes exist. (Works ~70-80% of the time)</p>
   <p class="follow-text">Follow me on GitHub & LinkedIn for more stuff</p>
-  <div class="card">
+  
+  <!-- Mode Toggle Tabs -->
+  <div class="mode-tabs">
+    <button class="mode-tab active" data-mode="generate" onclick="switchMode('generate')">Generate & Verify</button>
+    <button class="mode-tab" data-mode="validate" onclick="switchMode('validate')">Validate Emails</button>
+  </div>
+  
+  <!-- Generate Mode -->
+  <div class="card" id="generateMode">
     <div class="form-row full">
       <input type="text" id="domain" placeholder="Domain (e.g. company.com)" autocomplete="off">
     </div>
@@ -143,6 +161,40 @@ tr:hover td { background: #f9fafb; }
       <button class="btn-secondary" onclick="copyValid()">Copy Valid</button>
     </div>
   </div>
+  
+  <!-- Validate Mode -->
+  <div class="card" id="validateMode" style="display:none">
+    <div class="form-row full">
+      <textarea id="emailInput" placeholder="Enter single or multiple emails, separated by commas or new lines" rows="6" style="padding: 10px 14px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; font-family: monospace; resize: vertical;">
+</textarea>
+    </div>
+    <div class="field-hint">Paste one email or many emails separated by commas or new lines, or upload CSV/XLS/XLSX files and we will extract only the email addresses.</div>
+    
+    <div style="margin-top: 16px;">
+      <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">Optional: upload CSV / Excel / TXT file</label>
+      <div class="file-upload-wrapper">
+        <input type="file" id="emailFile" accept=".csv,.xlsx,.xls,.txt" style="display:none">
+        <button class="btn-secondary" onclick="document.getElementById('emailFile').click()">Choose file</button>
+        <span id="fileName" style="margin-left: 12px; color: #666; font-size: 13px;"></span>
+      </div>
+    </div>
+    
+    <button id="validateBtn" onclick="validateEmails()" style="margin-top: 16px;">Validate Emails</button>
+    <div id="validateProgressWrap" class="progress-wrap" aria-live="polite" style="margin-top: 16px;">
+      <div class="progress-label">
+        <span id="validateProgressText">Validating...</span>
+        <span id="validateProgressPercent"></span>
+      </div>
+      <div class="progress-track">
+        <div id="validateProgressFill" class="progress-fill"></div>
+      </div>
+    </div>
+    <div class="controls" style="margin-top: 12px;">
+      <button class="btn-secondary" onclick="copyValidateAll()">Copy All</button>
+      <button class="btn-secondary" onclick="copyValidateValid()">Copy Valid</button>
+      <button class="btn-secondary" onclick="clearValidateForm()">Clear</button>
+    </div>
+  </div>
 
   <div id="results" class="result-section" style="display:none">
     <div class="result-header">
@@ -157,6 +209,31 @@ tr:hover td { background: #f9fafb; }
     </div>
     <div id="selectedGroup"></div>
   </div>
+  
+  <div id="validateResults" class="result-section" style="display:none">
+    <div class="result-header">
+      <h2>Validation Results</h2>
+      <span id="validateStatusBadge" class="badge idle">Idle</span>
+    </div>
+    <div id="validateSummary" class="summary"></div>
+    <div class="name-panel">
+      <div class="name-panel-header">
+        <h3>Validated Emails</h3>
+        <span class="muted" id="validateEmailCount">0 email(s)</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Email</th>
+            <th>Status</th>
+            <th>Reason</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="validateResultsTable"></tbody>
+      </table>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -166,6 +243,227 @@ let currentGroups = [];
 let selectedGroupIndex = 0;
 let currentTabPage = 0;
 const TAB_PAGE_SIZE = 5;
+let currentMode = 'generate';
+let validateResults = [];
+let selectedEmailFile = null;
+
+function switchMode(mode) {
+  currentMode = mode;
+  document.getElementById('generateMode').style.display = mode === 'generate' ? 'block' : 'none';
+  document.getElementById('validateMode').style.display = mode === 'validate' ? 'block' : 'none';
+  
+  // Update tab styles
+  document.querySelectorAll('.mode-tab').forEach(tab => {
+    tab.classList.remove('active');
+    if (tab.getAttribute('data-mode') === mode) {
+      tab.classList.add('active');
+    }
+  });
+  
+  // Hide results when switching modes
+  if (mode === 'generate') {
+    document.getElementById('validateResults').style.display = 'none';
+  } else {
+    document.getElementById('results').style.display = 'none';
+  }
+}
+
+async function handleFileUpload(file) {
+  selectedEmailFile = file || null;
+  document.getElementById('fileName').textContent = file ? '✓ ' + file.name : '';
+}
+
+async function extractEmailsFromFile(fileName, content) {
+  const emails = [];
+  
+  if (fileName.endsWith('.csv')) {
+    const text = new TextDecoder().decode(content);
+    const lines = text.split('\n');
+    lines.forEach(line => {
+      const parts = line.split(',');
+      parts.forEach(part => {
+        const email = part.trim();
+        if (isValidEmail(email)) emails.push(email);
+      });
+    });
+  } else if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
+    try {
+      // Try to use a simple approach - XLSX files are complex, so we'll show a message
+      const text = new TextDecoder().decode(content);
+      // Try to extract emails from any text content
+      const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+      const found = text.match(emailRegex) || [];
+      emails.push(...found.filter(e => isValidEmail(e)));
+    } catch (err) {
+      alert('Excel file parsing requires additional libraries. Please use CSV format instead or paste emails directly.');
+    }
+  } else if (fileName.endsWith('.txt')) {
+    const text = new TextDecoder().decode(content);
+    const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+    const found = text.match(emailRegex) || [];
+    emails.push(...found.filter(e => isValidEmail(e)));
+  }
+  
+  return [...new Set(emails)]; // Remove duplicates
+}
+
+function isValidEmail(email) {
+  const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+  return emailRegex.test(email);
+}
+
+function clearValidateForm() {
+  document.getElementById('emailInput').value = '';
+  document.getElementById('emailFile').value = '';
+  document.getElementById('fileName').textContent = '';
+  document.getElementById('validateResults').style.display = 'none';
+  validateResults = [];
+  selectedEmailFile = null;
+}
+
+async function validateEmails() {
+  const emailText = document.getElementById('emailInput').value;
+  const fileInput = document.getElementById('emailFile');
+  const file = selectedEmailFile || (fileInput && fileInput.files ? fileInput.files[0] : null);
+  
+  if (!emailText.trim() && !file) {
+    alert('Please enter or upload emails to validate.');
+    return;
+  }
+  
+  const validateBtn = document.getElementById('validateBtn');
+  validateBtn.disabled = true;
+  validateBtn.textContent = 'Validating...';
+  
+  document.getElementById('validateResults').style.display = 'block';
+  document.getElementById('validateStatusBadge').textContent = 'Validating...';
+  document.getElementById('validateStatusBadge').className = 'badge loading';
+  document.getElementById('validateProgressWrap').style.display = 'block';
+  
+  showValidateProgress('Validating emails...', 0, true);
+  
+  try {
+    const response = file
+      ? await (async () => {
+          const formData = new FormData();
+          formData.append('emails_text', emailText);
+          formData.append('file', file);
+          return fetch('/api/validate-emails-upload', { method: 'POST', body: formData });
+        })()
+      : await fetch('/api/validate-emails', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ emails: emailText.split(/[,\n]/).map(e => e.trim()).filter(e => e && isValidEmail(e)) }),
+        });
+    
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.detail || 'Validation failed');
+    }
+    
+    const data = await response.json();
+    validateResults = data.results;
+    
+    renderValidateResults(validateResults);
+    document.getElementById('validateStatusBadge').textContent = 'Done';
+    document.getElementById('validateStatusBadge').className = 'badge done';
+    showValidateProgress('Validation complete', 100, false);
+    
+  } catch (error) {
+    alert('Error: ' + error.message);
+    document.getElementById('validateStatusBadge').textContent = 'Error';
+    document.getElementById('validateStatusBadge').className = 'badge idle';
+  } finally {
+    validateBtn.disabled = false;
+    validateBtn.textContent = 'Validate Emails';
+    setTimeout(() => {
+      document.getElementById('validateProgressWrap').style.display = 'none';
+    }, 1000);
+  }
+}
+
+function showValidateProgress(label = 'Validating...', percent = null, indeterminate = false) {
+  const wrap = document.getElementById('validateProgressWrap');
+  const text = document.getElementById('validateProgressText');
+  const pct = document.getElementById('validateProgressPercent');
+  const fill = document.getElementById('validateProgressFill');
+  
+  wrap.style.display = 'block';
+  wrap.classList.toggle('indeterminate', indeterminate);
+  text.textContent = label;
+  
+  if (typeof percent === 'number' && !indeterminate) {
+    const safe = Math.max(0, Math.min(100, percent));
+    fill.style.width = `${safe}%`;
+    pct.textContent = `${Math.round(safe)}%`;
+  } else {
+    fill.style.width = '35%';
+    pct.textContent = '';
+  }
+}
+
+function renderValidateResults(results) {
+  const tbody = document.getElementById('validateResultsTable');
+  const summary = document.getElementById('validateSummary');
+  tbody.innerHTML = '';
+  
+  const sortedResults = results.sort((a, b) => {
+    const aPriority = a.status === 'valid' ? 0 : 1;
+    const bPriority = b.status === 'valid' ? 0 : 1;
+    return aPriority - bPriority;
+  });
+  
+  sortedResults.forEach(result => {
+    const tr = document.createElement('tr');
+    const statusText = result.status === 'valid' ? 'Valid' : 
+                       result.status === 'invalid' ? 'Invalid' : 
+                       result.status === 'unknown' ? 'Unknown' : 
+                       result.status === 'catchall' ? 'Catch-all' : 'Error';
+    
+    let statusClass = result.status === 'valid' ? 'valid' : 
+                      result.status === 'invalid' ? 'invalid' : 
+                      result.status === 'unknown' ? 'unknown' : 
+                      result.status === 'catchall' ? 'catchall' : 'error';
+    
+    tr.innerHTML = `
+      <td><code>${escHtml(result.email)}</code></td>
+      <td><span class="status-dot ${statusClass}"></span>${statusText}</td>
+      <td class="reason">${escHtml(result.reason || '-')}</td>
+      <td><button class="copy-btn" data-email="${escHtml(result.email)}" onclick="copyEmail(this.getAttribute('data-email'), this)">Copy</button></td>
+    `;
+    tbody.appendChild(tr);
+  });
+  
+  document.getElementById('validateEmailCount').textContent = results.length + ' email(s)';
+  
+  // Update summary
+  const valid = results.filter(r => r.status === 'valid').length;
+  const invalid = results.filter(r => r.status === 'invalid').length;
+  const error = results.filter(r => r.status === 'error').length;
+  const unknown = results.filter(r => r.status === 'unknown').length;
+  const catchall = results.filter(r => r.status === 'catchall').length;
+  
+  summary.innerHTML = `
+    <span>Total: <strong>${results.length}</strong></span>
+    <span class="count-valid">✓ Valid: ${valid}</span>
+    <span class="count-invalid">✗ Invalid: ${invalid}</span>
+    <span class="count-catchall">⚠ Catch-all: ${catchall}</span>
+    <span class="count-unknown">❓ Unknown: ${unknown}</span>
+    <span class="count-error">⚠ Error: ${error}</span>
+  `;
+}
+
+function copyValidateAll() {
+  const emails = validateResults.map(r => r.email);
+  if (emails.length === 0) return;
+  navigator.clipboard.writeText(emails.join('\n')).then(() => alert('All emails copied!'));
+}
+
+function copyValidateValid() {
+  const valid = validateResults.filter(r => r.status === 'valid').map(r => r.email);
+  if (valid.length === 0) { alert('No valid emails found.'); return; }
+  navigator.clipboard.writeText(valid.join('\n')).then(() => alert(`${valid.length} valid emails copied!`));
+}
 
 function escHtml(s) {
   if (!s) return '';
@@ -312,6 +610,7 @@ function hideProgress() {
 }
 
 function showGroupedResults(groups) {
+  document.getElementById('validateResults').style.display = 'none';
   document.getElementById('results').style.display = 'block';
   const previousSelectedKey = currentGroups[selectedGroupIndex]?.key;
   const orderedGroups = [...groups].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
@@ -612,6 +911,22 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('domain').addEventListener('keydown', e => {
     if (e.key === 'Enter') startSearch();
   });
+  
+  // Initialize mode tabs
+  switchMode('generate');
+  
+  // File upload handling
+  const fileInput = document.getElementById('emailFile');
+  if (fileInput) {
+    fileInput.addEventListener('change', function(e) {
+      const file = e.target.files[0];
+      if (file) {
+        handleFileUpload(file);
+      } else {
+        handleFileUpload(null);
+      }
+    });
+  }
 });
 </script>
 </body>
