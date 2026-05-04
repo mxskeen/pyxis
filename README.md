@@ -10,6 +10,7 @@ free and self hosted
 - Generate 13+ common email patterns from name + domain (add more patterns in main.py)
 - Verify inboxes via SMTP handshake
 - Works with Gmail, Outlook, and most business email providers
+- Can be used for individual/bulk email validation too
 - Zoho detection (blocks verification from dynamic IPs)
 
 ## Quick Start
