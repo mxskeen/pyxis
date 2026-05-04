@@ -29,6 +29,16 @@ button:disabled { background: #93b4f5; cursor: not-allowed; }
 .btn-add-name:hover { background: #f3f4f6; }
 .btn-remove-name { background: white; border: 1px solid #fecaca; color: #dc2626; border-radius: 8px; padding: 0 12px; font-size: 18px; font-weight: 700; cursor: pointer; width: auto; line-height: 1; }
 .btn-remove-name:hover { background: #fef2f2; }
+.progress-wrap { margin-top: 10px; display: none; }
+.progress-label { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #6b7280; margin-bottom: 6px; }
+.progress-track { width: 100%; height: 8px; border-radius: 999px; background: #e5e7eb; overflow: hidden; }
+.progress-fill { width: 0%; height: 100%; background: #2563eb; transition: width 0.25s ease; }
+.progress-wrap.indeterminate .progress-fill { width: 35%; animation: progressSlide 1.1s ease-in-out infinite; }
+@keyframes progressSlide {
+  0% { transform: translateX(-120%); }
+  50% { transform: translateX(130%); }
+  100% { transform: translateX(300%); }
+}
 .result-section { margin-top: 24px; }
 .result-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .result-header h2 { font-size: 18px; }
@@ -36,10 +46,18 @@ button:disabled { background: #93b4f5; cursor: not-allowed; }
 .badge.idle { background: #e5e7eb; color: #666; }
 .badge.loading { background: #dbeafe; color: #1d4ed8; }
 .badge.done { background: #d1fae5; color: #065f46; }
-.name-group { margin-top: 14px; border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden; }
-.name-group-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; background: #f9fafb; border-bottom: 1px solid #e5e7eb; }
-.name-group-header h3 { font-size: 14px; font-weight: 600; }
-.name-group-header .muted { color: #6b7280; font-size: 12px; }
+.tabs-nav { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+.tabs-arrow { width: auto; padding: 6px 10px; border-radius: 8px; border: 1px solid #d1d5db; background: white; color: #374151; font-size: 14px; font-weight: 700; }
+.tabs-arrow:hover { background: #f3f4f6; }
+.tabs-arrow:disabled { background: #f9fafb; color: #9ca3af; border-color: #e5e7eb; }
+.tabs-list { flex: 1; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.name-tab { width: 100%; padding: 8px 10px; border: 1px solid #d1d5db; background: white; color: #374151; border-radius: 8px; font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.name-tab:hover { background: #f3f4f6; }
+.name-tab.active { border-color: #2563eb; color: #1d4ed8; background: #eff6ff; }
+.name-panel { margin-top: 10px; border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden; }
+.name-panel-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; background: #f9fafb; border-bottom: 1px solid #e5e7eb; }
+.name-panel-header h3 { font-size: 14px; font-weight: 600; }
+.name-panel-header .muted { color: #6b7280; font-size: 12px; }
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
 th { text-align: left; padding: 10px 12px; border-bottom: 2px solid #e5e7eb; color: #666; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
 td { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; }
@@ -71,6 +89,7 @@ tr:hover td { background: #f9fafb; }
 @media (max-width: 600px) {
   .form-row { grid-template-columns: 1fr; }
   .name-row { grid-template-columns: 1fr; }
+  .tabs-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .social-links { right: 10px; top: 10px; gap: 8px; }
   .social-link { width: 36px; height: 36px; }
 }
@@ -105,6 +124,15 @@ tr:hover td { background: #f9fafb; }
       <input type="checkbox" id="streamMode"> Slow mode (verify one at a time, more reliable)
     </label>
     <button id="findBtn" onclick="startSearch()">Generate &amp; Verify</button>
+    <div id="progressWrap" class="progress-wrap" aria-live="polite">
+      <div class="progress-label">
+        <span id="progressText">Starting...</span>
+        <span id="progressPercent"></span>
+      </div>
+      <div class="progress-track">
+        <div id="progressFill" class="progress-fill"></div>
+      </div>
+    </div>
     <div class="controls">
       <button class="btn-secondary" onclick="generateOnly()">Generate Only</button>
       <button class="btn-secondary" onclick="copyAll()">Copy All</button>
@@ -118,13 +146,22 @@ tr:hover td { background: #f9fafb; }
       <span id="statusBadge" class="badge idle">Idle</span>
     </div>
     <div id="summary" class="summary"></div>
-    <div id="resultsGroups"></div>
+    <div id="tabsNav" class="tabs-nav" style="display:none">
+      <button id="tabsPrev" class="tabs-arrow" onclick="changeTabPage(-1)">&larr;</button>
+      <div id="nameTabs" class="tabs-list"></div>
+      <button id="tabsNext" class="tabs-arrow" onclick="changeTabPage(1)">&rarr;</button>
+    </div>
+    <div id="selectedGroup"></div>
   </div>
 </div>
 
 <script>
 const results = new Map();
 let personCounter = 0;
+let currentGroups = [];
+let selectedGroupIndex = 0;
+let currentTabPage = 0;
+const TAB_PAGE_SIZE = 5;
 
 function escHtml(s) {
   if (!s) return '';
@@ -204,44 +241,150 @@ function setLoadingState(isLoading) {
   btn.textContent = isLoading ? 'Verifying...' : 'Generate & Verify';
 }
 
+function showProgress(label = 'Verifying...', percent = null, indeterminate = false) {
+  const wrap = document.getElementById('progressWrap');
+  const text = document.getElementById('progressText');
+  const pct = document.getElementById('progressPercent');
+  const fill = document.getElementById('progressFill');
+
+  wrap.style.display = 'block';
+  wrap.classList.toggle('indeterminate', indeterminate);
+  text.textContent = label;
+
+  if (typeof percent === 'number' && !indeterminate) {
+    const safe = Math.max(0, Math.min(100, percent));
+    fill.style.width = `${safe}%`;
+    pct.textContent = `${Math.round(safe)}%`;
+  } else {
+    fill.style.width = '35%';
+    pct.textContent = '';
+  }
+}
+
+function hideProgress() {
+  const wrap = document.getElementById('progressWrap');
+  const fill = document.getElementById('progressFill');
+  wrap.style.display = 'none';
+  wrap.classList.remove('indeterminate');
+  fill.style.width = '0%';
+  document.getElementById('progressText').textContent = 'Starting...';
+  document.getElementById('progressPercent').textContent = '';
+}
+
 function showGroupedResults(groups) {
   document.getElementById('results').style.display = 'block';
-  const groupsContainer = document.getElementById('resultsGroups');
-  groupsContainer.innerHTML = '';
-  results.clear();
-
+  const previousSelectedKey = currentGroups[selectedGroupIndex]?.key;
   const orderedGroups = [...groups].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 
-  orderedGroups.forEach(group => {
-    const sortedRows = sortRowsValidFirst(group.results);
-    const wrapper = document.createElement('div');
-    wrapper.className = 'name-group';
-    wrapper.innerHTML = `
-      <div class="name-group-header">
-        <h3>${escHtml(group.label)}</h3>
-        <span class="muted">${sortedRows.length} email(s)</span>
-      </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Email</th>
-            <th>Status</th>
-            <th>Reason</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    `;
+  currentGroups = orderedGroups;
+  selectedGroupIndex = 0;
+  if (previousSelectedKey) {
+    const foundIndex = currentGroups.findIndex(g => g.key === previousSelectedKey);
+    if (foundIndex >= 0) selectedGroupIndex = foundIndex;
+  }
+  if (selectedGroupIndex >= currentGroups.length) selectedGroupIndex = Math.max(currentGroups.length - 1, 0);
+  currentTabPage = Math.floor(selectedGroupIndex / TAB_PAGE_SIZE);
 
-    const tbody = wrapper.querySelector('tbody');
+  rebuildResultsMap();
+  renderTabsAndSelectedGroup();
+}
+
+function rebuildResultsMap() {
+  results.clear();
+
+  currentGroups.forEach(group => {
+    const sortedRows = sortRowsValidFirst(group.results);
     sortedRows.forEach(resultRow => {
       const resultKey = `${group.key}|${resultRow.email}`;
       results.set(resultKey, resultRow);
-      addResultRow(tbody, resultRow);
     });
-    groupsContainer.appendChild(wrapper);
   });
+}
+
+function renderTabsAndSelectedGroup() {
+  const tabsNav = document.getElementById('tabsNav');
+  const tabsContainer = document.getElementById('nameTabs');
+  const selectedGroupContainer = document.getElementById('selectedGroup');
+  tabsContainer.innerHTML = '';
+  selectedGroupContainer.innerHTML = '';
+
+  if (!currentGroups.length) {
+    tabsNav.style.display = 'none';
+    return;
+  }
+
+  tabsNav.style.display = 'flex';
+  const pageCount = Math.ceil(currentGroups.length / TAB_PAGE_SIZE);
+  if (currentTabPage < 0) currentTabPage = 0;
+  if (currentTabPage >= pageCount) currentTabPage = pageCount - 1;
+
+  const start = currentTabPage * TAB_PAGE_SIZE;
+  const end = Math.min(start + TAB_PAGE_SIZE, currentGroups.length);
+
+  for (let idx = start; idx < end; idx += 1) {
+    const group = currentGroups[idx];
+    const tab = document.createElement('button');
+    tab.className = `name-tab ${idx === selectedGroupIndex ? 'active' : ''}`;
+    tab.textContent = group.label;
+    tab.title = group.label;
+    tab.onclick = () => selectGroup(idx);
+    tabsContainer.appendChild(tab);
+  }
+
+  document.getElementById('tabsPrev').disabled = currentTabPage === 0;
+  document.getElementById('tabsNext').disabled = currentTabPage >= pageCount - 1;
+
+  renderSelectedGroupTable();
+}
+
+function renderSelectedGroupTable() {
+  const selectedGroupContainer = document.getElementById('selectedGroup');
+  selectedGroupContainer.innerHTML = '';
+  if (!currentGroups.length) return;
+
+  const group = currentGroups[selectedGroupIndex];
+  const sortedRows = sortRowsValidFirst(group.results);
+
+  const panel = document.createElement('div');
+  panel.className = 'name-panel';
+  panel.innerHTML = `
+    <div class="name-panel-header">
+      <h3>${escHtml(group.label)}</h3>
+      <span class="muted">${sortedRows.length} email(s)</span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Email</th>
+          <th>Status</th>
+          <th>Reason</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  `;
+
+  const tbody = panel.querySelector('tbody');
+  sortedRows.forEach(resultRow => addResultRow(tbody, resultRow));
+  selectedGroupContainer.appendChild(panel);
+}
+
+function selectGroup(index) {
+  selectedGroupIndex = index;
+  currentTabPage = Math.floor(index / TAB_PAGE_SIZE);
+  renderTabsAndSelectedGroup();
+}
+
+function changeTabPage(direction) {
+  const pageCount = Math.ceil(currentGroups.length / TAB_PAGE_SIZE);
+  currentTabPage = Math.max(0, Math.min(pageCount - 1, currentTabPage + direction));
+  const pageStart = currentTabPage * TAB_PAGE_SIZE;
+  const pageEnd = Math.min(pageStart + TAB_PAGE_SIZE, currentGroups.length) - 1;
+  if (selectedGroupIndex < pageStart || selectedGroupIndex > pageEnd) {
+    selectedGroupIndex = pageStart;
+  }
+  renderTabsAndSelectedGroup();
 }
 
 function addResultRow(tbody, r) {
@@ -321,12 +464,18 @@ async function startSearch() {
   document.getElementById('results').style.display = 'block';
   document.getElementById('statusBadge').textContent = 'Verifying...';
   document.getElementById('statusBadge').className = 'badge loading';
-  document.getElementById('resultsGroups').innerHTML = '';
+  document.getElementById('selectedGroup').innerHTML = '';
+  document.getElementById('nameTabs').innerHTML = '';
+  document.getElementById('tabsNav').style.display = 'none';
   document.getElementById('summary').innerHTML = '';
+  currentGroups = [];
+  selectedGroupIndex = 0;
+  currentTabPage = 0;
   results.clear();
 
   try {
     if (streamMode) {
+      showProgress('Slow mode: preparing verification...', 0, false);
       const groupedResults = [];
       let index = 0;
 
@@ -334,6 +483,7 @@ async function startSearch() {
         index += 1;
         const label = makePersonLabel(person);
         document.getElementById('statusBadge').textContent = `Verifying ${index}/${names.length}: ${label}`;
+        showProgress(`Slow mode: ${label}`, ((index - 1) / names.length) * 100, false);
 
         const res = await fetch(`/api/verify-all?first=${encodeURIComponent(person.first)}&last=${encodeURIComponent(person.last)}&domain=${encodeURIComponent(domain)}&middle=${encodeURIComponent(person.middle)}&stream=true`);
         if (!res.ok) {
@@ -351,8 +501,10 @@ async function startSearch() {
 
         showGroupedResults(groupedResults);
         updateSummary(Array.from(results.values()));
+        showProgress(`Completed: ${label}`, (index / names.length) * 100, false);
       }
     } else {
+      showProgress('Fast mode: verifying the inboxes, some domains may take longer...', null, true);
       const res = await fetch('/api/verify-all-multi', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -386,6 +538,7 @@ async function startSearch() {
     document.getElementById('statusBadge').className = 'badge idle';
   } finally {
     setLoadingState(false);
+    hideProgress();
   }
 }
 
@@ -410,6 +563,7 @@ function copyValid() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('streamMode').checked = false;
   addNameRow();
   document.getElementById('domain').addEventListener('keydown', e => {
     if (e.key === 'Enter') startSearch();

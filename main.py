@@ -280,6 +280,8 @@ async def verify_all_multi(payload: MultiNameRequest = Body(...)):
         raise HTTPException(status_code=400, detail="Domain is required")
 
     groups = []
+    verification_jobs = []
+
     for person in payload.names:
         normalized = normalize_person_name(person)
         if not normalized:
@@ -291,21 +293,26 @@ async def verify_all_multi(payload: MultiNameRequest = Body(...)):
             domain,
             normalized["middle"],
         )
-        tasks = [verify_smtp(email) for email in emails]
-        verified_results = await asyncio.gather(*tasks)
-
+        group_index = len(groups)
         groups.append(
             {
                 "name": normalized,
                 "label": person_label(
                     normalized["first"], normalized["last"], normalized["middle"]
                 ),
-                "results": verified_results,
+                "results": [],
             }
         )
+        for email in emails:
+            verification_jobs.append((group_index, verify_smtp(email)))
 
     if not groups:
         raise HTTPException(status_code=400, detail="At least one valid first name is required")
+
+    if verification_jobs:
+        verified_results = await asyncio.gather(*[job for _, job in verification_jobs])
+        for (group_index, _), result in zip(verification_jobs, verified_results):
+            groups[group_index]["results"].append(result)
 
     return {"domain": domain, "groups": groups}
 
