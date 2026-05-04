@@ -4,14 +4,26 @@ import smtplib
 import re
 import json
 import dns.resolver
-from fastapi import FastAPI, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pathlib import Path
+from pydantic import BaseModel
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Pyxis")
+
+
+class NameInput(BaseModel):
+    first: str
+    last: str = ""
+    middle: str = ""
+
+
+class MultiNameRequest(BaseModel):
+    domain: str
+    names: list[NameInput]
 
 PATTERNS = [
     "{first}.{last}@{domain}",
@@ -59,6 +71,22 @@ def generate_patterns(first: str, last: str, domain: str, middle: str = "") -> l
         if re.match(r'^[^@]+@[^@]+\.[^@]+$', email):
             emails.add(email)
     return sorted(emails)
+
+
+def normalize_person_name(person: NameInput) -> dict[str, str]:
+    first = person.first.strip()
+    if not first:
+        return {}
+    return {
+        "first": first,
+        "last": person.last.strip(),
+        "middle": person.middle.strip(),
+    }
+
+
+def person_label(first: str, last: str, middle: str = "") -> str:
+    parts = [first, middle, last]
+    return " ".join(p for p in parts if p)
 
 
 async def get_mx_host(domain: str) -> str | None:
@@ -199,11 +227,87 @@ async def generate_emails(
     return {"emails": emails, "count": len(emails)}
 
 
+@app.post("/api/generate-multi")
+async def generate_emails_multi(payload: MultiNameRequest = Body(...)):
+    """Generate possible email patterns for multiple people in one domain."""
+    domain = payload.domain.strip()
+    if not domain:
+        raise HTTPException(status_code=400, detail="Domain is required")
+
+    groups = []
+    total_count = 0
+    for person in payload.names:
+        normalized = normalize_person_name(person)
+        if not normalized:
+            continue
+
+        emails = generate_patterns(
+            normalized["first"],
+            normalized["last"],
+            domain,
+            normalized["middle"],
+        )
+        total_count += len(emails)
+        groups.append(
+            {
+                "name": normalized,
+                "label": person_label(
+                    normalized["first"], normalized["last"], normalized["middle"]
+                ),
+                "emails": emails,
+                "count": len(emails),
+            }
+        )
+
+    if not groups:
+        raise HTTPException(status_code=400, detail="At least one valid first name is required")
+
+    return {"domain": domain, "groups": groups, "total_count": total_count}
+
+
 @app.get("/api/verify")
 async def verify_email(email: str = Query(...)):
     """Verify a single email address."""
     result = await verify_smtp(email)
     return result
+
+
+@app.post("/api/verify-all-multi")
+async def verify_all_multi(payload: MultiNameRequest = Body(...)):
+    """Generate and verify email patterns for multiple people in one domain."""
+    domain = payload.domain.strip()
+    if not domain:
+        raise HTTPException(status_code=400, detail="Domain is required")
+
+    groups = []
+    for person in payload.names:
+        normalized = normalize_person_name(person)
+        if not normalized:
+            continue
+
+        emails = generate_patterns(
+            normalized["first"],
+            normalized["last"],
+            domain,
+            normalized["middle"],
+        )
+        tasks = [verify_smtp(email) for email in emails]
+        verified_results = await asyncio.gather(*tasks)
+
+        groups.append(
+            {
+                "name": normalized,
+                "label": person_label(
+                    normalized["first"], normalized["last"], normalized["middle"]
+                ),
+                "results": verified_results,
+            }
+        )
+
+    if not groups:
+        raise HTTPException(status_code=400, detail="At least one valid first name is required")
+
+    return {"domain": domain, "groups": groups}
 
 
 @app.get("/api/verify-all")
@@ -255,6 +359,62 @@ async def verify_stream(
             yield f"data: {json.dumps({'status': 'done'})}\n\n"
         except Exception as e:
             logger.error(f"Stream error: {e}")
+            yield f"data: {json.dumps({'status': 'error', 'error': str(e)[:100]})}\n\n"
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+        "Connection": "keep-alive",
+    }
+    return StreamingResponse(event_generator(), media_type="text/event-stream", headers=headers)
+
+
+@app.post("/api/verify-stream-multi")
+async def verify_stream_multi(payload: MultiNameRequest = Body(...)):
+    """Stream verification results for multiple people (SSE), sequentially."""
+    domain = payload.domain.strip()
+    if not domain:
+        raise HTTPException(status_code=400, detail="Domain is required")
+
+    normalized_people = []
+    for person in payload.names:
+        normalized = normalize_person_name(person)
+        if normalized:
+            normalized_people.append(normalized)
+
+    if not normalized_people:
+        raise HTTPException(status_code=400, detail="At least one valid first name is required")
+
+    async def event_generator():
+        try:
+            for person in normalized_people:
+                label = person_label(person["first"], person["last"], person["middle"])
+                emails = generate_patterns(
+                    person["first"], person["last"], domain, person["middle"]
+                )
+                yield f"data: {json.dumps({'status': 'person-start', 'label': label, 'name': person})}\n\n"
+
+                for email in emails:
+                    try:
+                        result = await verify_smtp(email)
+                        result["name"] = person
+                        result["label"] = label
+                        yield f"data: {json.dumps(result)}\n\n"
+                    except Exception as e:
+                        logger.error(f"Error verifying {email}: {e}")
+                        error_result = {
+                            "email": email,
+                            "status": "error",
+                            "valid": False,
+                            "reason": str(e)[:100],
+                            "name": person,
+                            "label": label,
+                        }
+                        yield f"data: {json.dumps(error_result)}\n\n"
+
+            yield f"data: {json.dumps({'status': 'done'})}\n\n"
+        except Exception as e:
+            logger.error(f"Multi stream error: {e}")
             yield f"data: {json.dumps({'status': 'error', 'error': str(e)[:100]})}\n\n"
 
     headers = {

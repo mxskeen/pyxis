@@ -40,7 +40,7 @@ Open http://localhost:8000
 
 ## Usage
 
-1. Enter first name, last name (optional), and domain
+1. Enter one domain and add one or more names using the + Add Name button
 2. Click "Generate & Verify"
 3. Results show:
    - **Valid** (green) - inbox exists
