@@ -45,6 +45,28 @@ PATTERNS = [
 ]
 
 
+DOMAIN_RE = re.compile(r"^(?!-)(?:[a-z0-9-]{1,63}\.)+[a-z]{2,63}$", re.IGNORECASE)
+
+
+def normalize_domain(domain: str) -> str:
+    value = domain.strip().lower()
+    if not value:
+        raise HTTPException(status_code=400, detail="Domain is required")
+    if any(char.isspace() for char in value):
+        raise HTTPException(status_code=400, detail="Domain cannot contain spaces")
+    if "@" in value:
+        raise HTTPException(status_code=400, detail="Enter only the domain, not an email address")
+    if "://" in value:
+        raise HTTPException(status_code=400, detail="Enter only the domain, not a URL")
+    if "/" in value:
+        raise HTTPException(status_code=400, detail="Enter only the domain, not a path")
+    if "." not in value:
+        raise HTTPException(status_code=400, detail="Domain must include a TLD, like .com or .ai")
+    if not DOMAIN_RE.match(value):
+        raise HTTPException(status_code=400, detail="Please enter a valid domain name with a TLD")
+    return value
+
+
 def generate_patterns(first: str, last: str, domain: str, middle: str = "") -> list[str]:
     domain = domain.lower().strip()
     first = first.lower().strip()
@@ -223,6 +245,7 @@ async def generate_emails(
     middle: str = Query(default=""),
 ):
     """Generate possible email patterns for a person."""
+    domain = normalize_domain(domain)
     emails = generate_patterns(first, last, domain, middle)
     return {"emails": emails, "count": len(emails)}
 
@@ -230,9 +253,7 @@ async def generate_emails(
 @app.post("/api/generate-multi")
 async def generate_emails_multi(payload: MultiNameRequest = Body(...)):
     """Generate possible email patterns for multiple people in one domain."""
-    domain = payload.domain.strip()
-    if not domain:
-        raise HTTPException(status_code=400, detail="Domain is required")
+    domain = normalize_domain(payload.domain)
 
     groups = []
     total_count = 0
@@ -275,9 +296,7 @@ async def verify_email(email: str = Query(...)):
 @app.post("/api/verify-all-multi")
 async def verify_all_multi(payload: MultiNameRequest = Body(...)):
     """Generate and verify email patterns for multiple people in one domain."""
-    domain = payload.domain.strip()
-    if not domain:
-        raise HTTPException(status_code=400, detail="Domain is required")
+    domain = normalize_domain(payload.domain)
 
     groups = []
     verification_jobs = []
@@ -326,6 +345,7 @@ async def verify_all(
     stream: bool = Query(default=False),
 ):
     """Generate and verify all email patterns. Set stream=true for sequential verification."""
+    domain = normalize_domain(domain)
     emails = generate_patterns(first, last, domain, middle)
 
     if stream:
@@ -351,6 +371,7 @@ async def verify_stream(
     middle: str = Query(default=""),
 ):
     """Stream verification results as they complete (SSE) - sequential verification."""
+    domain = normalize_domain(domain)
     emails = generate_patterns(first, last, domain, middle)
 
     async def event_generator():
