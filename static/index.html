@@ -15,6 +15,16 @@ h1 { font-size: 28px; margin-bottom: 8px; }
 .subtitle { color: #666; margin-bottom: 32px; font-size: 14px; }
 .follow-text { color: #999; margin-bottom: 32px; font-size: 13px; font-style: italic; }
 .card { background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 20px; }
+.faq-toggle { margin-bottom: 20px; padding: 0; overflow: hidden; border: 1px solid #e5e7eb; border-radius: 10px; background: rgba(255,255,255,0.9); }
+.faq-toggle summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; font-size: 13px; font-weight: 700; color: #1f2937; }
+.faq-toggle summary::-webkit-details-marker { display: none; }
+.faq-toggle summary span { font-size: 11px; font-weight: 600; color: #6b7280; }
+.faq-toggle[open] summary { border-bottom: 1px solid #eef2f7; background: #fafafa; }
+.faq-content { padding: 12px 14px 14px; }
+.faq-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.faq-item { padding: 12px; border: 1px solid #eef2f7; border-radius: 8px; background: #fbfcfd; }
+.faq-item h3 { font-size: 13px; margin-bottom: 4px; color: #111827; }
+.faq-item p { font-size: 12px; line-height: 1.4; color: #4b5563; }
 .form-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 12px; }
 .form-row.full { grid-template-columns: 1fr; }
 .names-header { display: flex; align-items: center; justify-content: space-between; margin: 8px 0 10px; }
@@ -99,6 +109,7 @@ tr:hover td { background: #f9fafb; }
 textarea { width: 100%; padding: 10px 14px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; outline: none; transition: border-color 0.2s; }
 textarea:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
 @media (max-width: 600px) {
+  .faq-grid { grid-template-columns: 1fr; }
   .form-row { grid-template-columns: 1fr; }
   .name-row { grid-template-columns: 1fr; }
   .tabs-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -124,6 +135,38 @@ textarea:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.1
   <h1>Pyxis</h1>
   <p class="subtitle">Generate email patterns and verify which inboxes exist. (Works ~70-80% of the time)</p>
   <p class="follow-text">Follow me on GitHub & LinkedIn for more stuff</p>
+
+  <details class="faq-toggle">
+    <summary>Common API errors <span>tap to expand</span></summary>
+    <div class="faq-content">
+      <div class="faq-grid">
+      <div class="faq-item">
+        <h3>Timeout — 408 / ETIMEDOUT</h3>
+        <p>The server did not answer in time, so the check could not be completed. Retry later or use slower checks.</p>
+      </div>
+      <div class="faq-item">
+        <h3>Catch-all — 250 / 2xx</h3>
+        <p>The domain accepts almost any address, so a positive result may not mean the mailbox really exists.</p>
+      </div>
+      <div class="faq-item">
+        <h3>Rate limited — 429</h3>
+        <p>Too many checks were sent too quickly. Wait a bit and retry, or use slow mode for more reliable results.</p>
+      </div>
+      <div class="faq-item">
+        <h3>Blocked / rejected — 403 / 550 / 554</h3>
+        <p>The server or mailbox provider refused the check. This can happen because of policy, filtering, or anti-abuse rules.</p>
+      </div>
+      <div class="faq-item">
+        <h3>MX not found — NXDOMAIN / 550</h3>
+        <p>The domain does not have valid mail routing records, so email delivery is not set up or cannot be verified.</p>
+      </div>
+      <div class="faq-item">
+        <h3>Unknown / error — 500 / 502 / 503</h3>
+        <p>The API could not confirm the status. Treat it as inconclusive and recheck before relying on it.</p>
+      </div>
+      </div>
+    </div>
+  </details>
   
   <!-- Mode Toggle Tabs -->
   <div class="mode-tabs">
