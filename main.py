@@ -82,6 +82,19 @@ PATTERNS = [
 
 DOMAIN_RE = re.compile(r"^(?!-)(?:[a-z0-9-]{1,63}\.)+[a-z]{2,63}$", re.IGNORECASE)
 
+# Global semaphore to limit concurrent SMTP connections. Default to 5.
+SMTP_SEMAPHORE: asyncio.Semaphore = asyncio.Semaphore(5)
+
+
+def set_concurrent_limit(max_concurrent: int) -> None:
+    """Set the module-level semaphore to limit concurrent SMTP checks.
+
+    Keeps values in a safe range (1-50).
+    """
+    global SMTP_SEMAPHORE
+    max_c = max(1, min(50, int(max_concurrent)))
+    SMTP_SEMAPHORE = asyncio.Semaphore(max_c)
+
 
 def normalize_domain(domain: str) -> str:
     value = domain.strip().lower()
@@ -228,19 +241,21 @@ async def get_mx_host(domain: str) -> str | None:
 async def verify_smtp_port(mx_host: str, email: str, port: int, use_tls: bool = False, timeout: int = 15) -> dict:
     """Verify email via SMTP on specific port."""
     try:
-        def _smtp_check():
-            server = smtplib.SMTP(timeout=timeout)
-            server.connect(mx_host, port)
-            if use_tls:
-                server.starttls()
-            server.ehlo()
-            server.mail('')
-            code, msg = server.rcpt(email)
-            server.quit()
-            return code, msg
+        # Acquire semaphore to limit concurrent SMTP connections
+        async with SMTP_SEMAPHORE:
+            def _smtp_check():
+                server = smtplib.SMTP(timeout=timeout)
+                server.connect(mx_host, port)
+                if use_tls:
+                    server.starttls()
+                server.ehlo()
+                server.mail('')
+                code, msg = server.rcpt(email)
+                server.quit()
+                return code, msg
 
-        loop = asyncio.get_event_loop()
-        code, msg = await loop.run_in_executor(None, _smtp_check)
+            loop = asyncio.get_event_loop()
+            code, msg = await loop.run_in_executor(None, _smtp_check)
 
         if code == 250:
             return {"email": email, "valid": True, "reason": f"Mailbox exists (port {port})", "status": "valid"}
@@ -399,9 +414,18 @@ async def verify_email(email: str = Query(...)):
 
 
 @app.post("/api/verify-all-multi")
-async def verify_all_multi(payload: MultiNameRequest = Body(...)):
-    """Generate and verify email patterns for multiple people in one domain."""
+async def verify_all_multi(
+    payload: MultiNameRequest = Body(...),
+    concurrency: int = Query(default=5, ge=1, le=50),
+):
+    """Generate and verify email patterns for multiple people in one domain.
+
+    `concurrency` controls the maximum concurrent SMTP checks (1-50).
+    """
     domain = normalize_domain(payload.domain)
+
+    # Set semaphore based on requested concurrency
+    set_concurrent_limit(concurrency)
 
     groups = []
     verification_jobs = []
@@ -438,7 +462,7 @@ async def verify_all_multi(payload: MultiNameRequest = Body(...)):
         for (group_index, _), result in zip(verification_jobs, verified_results):
             groups[group_index]["results"].append(result)
 
-    return {"domain": domain, "groups": groups}
+    return {"domain": domain, "groups": groups, "concurrency_used": concurrency}
 
 
 @app.get("/api/verify-all")
@@ -448,9 +472,16 @@ async def verify_all(
     domain: str = Query(...),
     middle: str = Query(default=""),
     stream: bool = Query(default=False),
+    concurrency: int = Query(default=5, ge=1, le=50),
 ):
-    """Generate and verify all email patterns. Set stream=true for sequential verification."""
+    """Generate and verify all email patterns. Set stream=true for sequential verification.
+
+    `concurrency` controls the maximum concurrent SMTP checks (1-50).
+    """
     domain = normalize_domain(domain)
+    # Apply concurrency limit
+    set_concurrent_limit(concurrency)
+
     emails = generate_patterns(first, last, domain, middle)
 
     if stream:
@@ -459,12 +490,12 @@ async def verify_all(
         for email in emails:
             result = await verify_smtp(email)
             results.append(result)
-        return {"results": results}
+        return {"results": results, "concurrency_used": concurrency}
     else:
         # Parallel verification (default)
         tasks = [verify_smtp(email) for email in emails]
         results = await asyncio.gather(*tasks)
-        return {"results": results}
+        return {"results": results, "concurrency_used": concurrency}
 
 
 

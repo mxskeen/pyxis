@@ -108,6 +108,15 @@ tr:hover td { background: #f9fafb; }
 .file-upload-wrapper { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 textarea { width: 100%; padding: 10px 14px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; outline: none; transition: border-color 0.2s; }
 textarea:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
+/* Minimalist concurrency slider styles */
+#concurrency-control { padding: 8px 6px; background: transparent; border: none; }
+#concurrency-control label { font-size: 13px; color: #374151; font-weight: 600; margin-bottom: 6px; display:block; }
+#concurrency-control input[type="range"] { -webkit-appearance: none; appearance: none; height: 6px; background: #eef2ff; border-radius: 999px; outline: none; }
+#concurrency-control input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #2563eb; box-shadow: 0 2px 6px rgba(37,99,235,0.25); margin-top: -4px; }
+#concurrency-control input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: #2563eb; box-shadow: 0 2px 6px rgba(37,99,235,0.25); }
+#concurrency-control .meta { font-size: 12px; color: #6b7280; display:flex; align-items:center; gap:8px; }
+#concurrency-control .value { font-weight:700; color:#111827; font-size:14px; }
+#concurrency-control .risk-dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
 @media (max-width: 600px) {
   .faq-grid { grid-template-columns: 1fr; }
   .form-row { grid-template-columns: 1fr; }
@@ -137,7 +146,7 @@ textarea:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.1
   <p class="follow-text">Follow me on GitHub & LinkedIn for more stuff</p>
 
   <details class="faq-toggle">
-    <summary>Common API errors <span>tap to expand</span></summary>
+    <summary>Common API errors <span>tap to  expand</span></summary>
     <div class="faq-content">
       <div class="faq-grid">
       <div class="faq-item">
@@ -188,6 +197,19 @@ textarea:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.1
     <label class="checkbox-label">
       <input type="checkbox" id="streamMode"> Slow mode (verify one at a time, more reliable)
     </label>
+    <!-- Concurrency slider (minimalist) -->
+    <div id="concurrency-control">
+      <label for="concurrencySlider">Concurrent SMTP Connections</label>
+      <div style="display:flex; gap:12px; align-items:center;">
+        <input id="concurrencySlider" type="range" min="1" max="50" value="5" />
+        <div class="meta" style="min-width:90px; justify-content:flex-end;">
+          <span class="value" id="concurrencyValue">5</span>
+          <span class="risk-dot" id="riskDot" style="background:#16a34a;"></span>
+          <span id="riskLabel" style="color:#6b7280;">Safe</span>
+        </div>
+      </div>
+      <div id="activeCounter" style="margin-top:8px; font-size:12px; color:#6b7280; display:none;">Active: <span id="activeCount">0</span>/<span id="activeMax">5</span></div>
+    </div>
     <button id="findBtn" onclick="startSearch()">Generate &amp; Verify</button>
     <div id="progressWrap" class="progress-wrap" aria-live="polite">
       <div class="progress-label">
@@ -843,6 +865,7 @@ async function startSearch() {
   if (!ensureValidDomain()) { alert('Please correct the domain and try again.'); return; }
 
   const streamMode = document.getElementById('streamMode').checked;
+  const concurrency = (document.getElementById('concurrencySlider') && parseInt(document.getElementById('concurrencySlider').value, 10)) || 5;
   setLoadingState(true);
 
   document.getElementById('results').style.display = 'block';
@@ -869,7 +892,7 @@ async function startSearch() {
         document.getElementById('statusBadge').textContent = `Verifying ${index}/${names.length}: ${label}`;
         showProgress(`Slow mode: ${label}`, ((index - 1) / names.length) * 100, false);
 
-        const res = await fetch(`/api/verify-all?first=${encodeURIComponent(person.first)}&last=${encodeURIComponent(person.last)}&domain=${encodeURIComponent(domain)}&middle=${encodeURIComponent(person.middle)}&stream=true`);
+        const res = await fetch(`/api/verify-all?first=${encodeURIComponent(person.first)}&last=${encodeURIComponent(person.last)}&domain=${encodeURIComponent(domain)}&middle=${encodeURIComponent(person.middle)}&stream=true&concurrency=${encodeURIComponent(concurrency)}`);
         if (!res.ok) {
           const err = await res.json();
           throw new Error(err.detail || 'Request failed');
@@ -889,7 +912,7 @@ async function startSearch() {
       }
     } else {
       showProgress('Fast mode: verifying the inboxes, some domains may take longer...', null, true);
-      const res = await fetch('/api/verify-all-multi', {
+      const res = await fetch('/api/verify-all-multi?concurrency=' + encodeURIComponent(concurrency), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -968,6 +991,24 @@ document.addEventListener('DOMContentLoaded', () => {
       } else {
         handleFileUpload(null);
       }
+    });
+  }
+
+  // Concurrency slider setup
+  const slider = document.getElementById('concurrencySlider');
+  const valueDisplay = document.getElementById('concurrencyValue');
+  const riskLabel = document.getElementById('riskLabel');
+  const activeCount = document.getElementById('activeCount');
+  const activeMax = document.getElementById('activeMax');
+  if (slider) {
+    slider.addEventListener('input', (e) => {
+      const v = parseInt(e.target.value, 10);
+      valueDisplay.textContent = v;
+      if (activeMax) activeMax.textContent = v;
+      if (v <= 5) { riskLabel.textContent = 'Safe'; riskLabel.style.color = '#16a34a'; }
+      else if (v <= 15) { riskLabel.textContent = 'Moderate'; riskLabel.style.color = '#f59e0b'; }
+      else if (v <= 30) { riskLabel.textContent = 'High'; riskLabel.style.color = '#f97316'; }
+      else { riskLabel.textContent = 'Very High'; riskLabel.style.color = '#ef4444'; }
     });
   }
 });
